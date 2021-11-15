@@ -1,14 +1,15 @@
 # packet_loss-script
 Script that checks packet loss over time, run it in a terminal if you suspect intermittant connection issues
 
-My Internet provider is at times flakey, and since I don't really care that much about statiscs over uptime when Im working from home, instead of running a more advanced netwotk analyzer, I tend to just have three panes in tmux running three instances of this.
+## Purpose
+
+My Internet provider is at times flakey, and since I don't really care that much about statiscs over uptime when Im not working from home, instead of running a more advanced netwotk analyzer, I tend to just have three panes in tmux running three instances of this: 
 
 1. packet_loss.sh 300 - to see the current trend, the last 20 lines will show status over the last 90 mins
 5. packet_loss 5 - fairly quick notification if Internet is gone
 3. packet_loss 5 router_ip - to quickly see if I lost connection to the home WiFi
 
-
-It's just a script, there are comments inside, that should be all you need :)
+The output only needs 28 chars of width, so doesnt take much screen real-estate.
 
 ## Route testing
 
