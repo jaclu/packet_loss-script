@@ -1,5 +1,5 @@
 #!/bin/sh
-__version="1.5.3 2021-11-14"
+__version="1.5.4 2021-12-12"
 #
 # Copyright (c) 2020,2021: Jacob.Lundqvist@gmail.com
 # License: MIT
@@ -7,6 +7,8 @@ __version="1.5.3 2021-11-14"
 # Part of https://github.com/jaclu/helpfull_scripts
 #
 #  Version: $__version
+#       Removed usage of which
+#   1.5.3 2021-11-14
 #       Added check if ping is the busybox version,
 #       without timeout param and deals with it.
 #       Removed timeout calculations, didn't make sense.
@@ -95,7 +97,7 @@ fi
 #
 #  Check if this ping supports timeout.
 #
-if [ -z "$(ls -l $(which ping)|grep busybox)" ]; then
+if [ -z "$(ls -l $(command -v ping)|grep busybox)" ]; then
     time_out_supported=1
     ping_cmd="ping -t 1"
 else
