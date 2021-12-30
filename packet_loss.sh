@@ -1,5 +1,5 @@
 #!/bin/sh
-__version="1.5.4 2021-12-12"
+__version="1.6.0 2021-12-18"
 #
 # Copyright (c) 2020,2021: Jacob.Lundqvist@gmail.com
 # License: MIT
@@ -7,7 +7,8 @@ __version="1.5.4 2021-12-12"
 # Part of https://github.com/jaclu/helpfull_scripts
 #
 #  Version: $__version
-#       Removed usage of which
+#       Added handling of different types of ping with various
+#       locations of percentage loss in output.
 #   1.5.3 2021-11-14
 #       Added check if ping is the busybox version,
 #       without timeout param and deals with it.
@@ -58,7 +59,7 @@ host=8.8.4.4
 #==========================================
 
 
-echo "$(basename $0) version: $__version"
+echo "$(basename "$0") version: $__version"
 
 
 #
@@ -68,6 +69,9 @@ if [ $# -gt 2 ] ; then
     echo "ERROR: Only params supported - pingcount and host."
     exit 1
 fi
+
+
+
 
 if [ -n  "$1" ] ; then
     ping_count="$1"
@@ -94,51 +98,68 @@ if [ -n "$2" ]; then
 fi
 
 
+
 #
-#  Check if this ping supports timeout.
 #
-if [ -z "$(ls -l $(command -v ping)|grep busybox)" ]; then
-    time_out_supported=1
-    ping_cmd="ping -t 1"
+#  2021-12-18 How can such a common and basic command as ping have different
+#  paramas on MacOS & linux?? I could have done this checking uname and let
+#  OS decide, but if there are other systems with other pings,
+#  lets just do it the hard way.
+#
+
+# Argh, even the position for % packet loss is not constant...
+packet_loss_param_no="7"
+
+# triggering an eror printing valid params...
+timeout_help="$(ping -h 2> /dev/stdout| grep timeout)"
+
+if [ "${timeout_help#*-t}" != "$timeout_help" ]; then
+    timeout_flag="t"
+elif [ "${timeout_help#*-W}" != "$timeout_help" ]; then
+    timeout_flag="W"
+    packet_loss_param_no="6"
 else
-    #
-    # busybox ping does not support ping timeout...
-    #
-    time_out_supported=0
+    timeout_flag=""
+fi
+
+if [ -n "$timeout_flag" ]; then
+    ping_tst_cmd="ping -$timeout_flag 1"
+    ping_cmd="ping -$timeout_flag $ping_count"
+else
+    ping_tst_cmd="ping"
     ping_cmd="ping"
     echo
-    echo "WARNING: This ping does not support a timeout param!"
-    echo
-    echo "  This means that each time when at first the host is not responding,"
-    echo "  there will be an initial 10 second timeout."
-    echo "  Concecutive failed pings will only take one second."
-    echo "  If the host reglarly fails to respond the accumulated first 10 seconds"
-    echo "  will add-up and skew the printouts"
+    echo "WARNING: This ping does not support timeouts, so when a host is not responding"
+    echo "         an extra 10 seconds will be spent timing out"
     echo
 fi
+# to avoid redundant typing common params are given once here
+ping_cmd="$ping_cmd -c $ping_count $host"
 
 
 #
 #  Check if host is initially responding.
 #
-$ping_cmd -c 1 "$host" > /dev/null
-if [ "$?" -ne 0 ]; then
+if ! $ping_tst_cmd -c 1 "$host" > /dev/null; then
     echo
     echo "WARNING: host: $host is not responding!"
     echo
 fi
 
 
+#
+#  Explaining task at hand
+#
 echo "This will ping once per second and report packet loss with"
-printf "$host every $ping_count packets"
+printf '%s every %s packets' "$host" "$ping_count"
 
-if [ "$time_out_supported" -eq 1 ]; then
-    ping_cmd="ping -t $ping_count"
+if [ -n "$timeout_flag" ]; then
     echo ", timing out after $ping_count seconds."
 else
     echo "."
 fi
 echo
+
 
 #
 #  Kill this script on Ctrl-C, dont let ping swallow it
@@ -153,17 +174,19 @@ trap '
 ' INT
 
 
+#
+#  Main loop
+#
 iterations=0
 while true; do
     #
     #  This will run $ping_count pings to $host and then report packet loss.
     #  This will be repated until Ctrl-C
     #
-    output="$( $ping_cmd -c $ping_count $host 2> /dev/null |
-               grep loss)"
+    output="$($ping_cmd  | grep loss)"
     iterations=$(( iterations + 1 ))
     this_time_packet_loss=$(echo "$output" | awk '{print $1-$4}')
-    this_time_percent_loss=$(echo "$output" | awk '{print $7}')
+    this_time_percent_loss=$(echo "$output" | awk -v a="$packet_loss_param_no" '{print $a}' )
     ack_loss=$((ack_loss + this_time_packet_loss))
     avg_loss=$(
         awk -v ack_loss=$ack_loss -v count=$iterations \
