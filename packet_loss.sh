@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 __version="1.6.0 2021-12-18"
 #
 # Copyright (c) 2020,2021: Jacob.Lundqvist@gmail.com
@@ -49,7 +49,11 @@ ping_count=60
 #
 # what to ping (can be overriden by param2)
 #
-host=8.8.4.4
+hosts="1.1.1.1" # 1.0.0.1
+
+# Interfaces to test connectivity
+# Add multiple interfaces separated by spaces (e.g., "eth0 eth0.52 eth0.55")
+interfaces="eth0" # eth0.52 eth0.55 eth0.56
 
 
 #==========================================
@@ -140,11 +144,13 @@ ping_cmd="$ping_cmd -c $ping_count $host"
 #
 #  Check if host is initially responding.
 #
-if ! $ping_tst_cmd -c 1 "$host" > /dev/null; then
-    echo
-    echo "WARNING: host: $host is not responding!"
-    echo
-fi
+for current_host in $hosts; do
+    if ! $ping_tst_cmd -c 1 "$current_host" > /dev/null; then
+        echo
+        echo "WARNING: Host $current_host is not responding!"
+        echo
+    fi
+done
 
 
 #
@@ -173,27 +179,115 @@ trap '
     kill -s INT "$$"
 ' INT
 
-
+#==========================================
 #
-#  Main loop
+#  Main loop for multiple hosts
 #
-iterations=0
-while true; do
-    #
-    #  This will run $ping_count pings to $host and then report packet loss.
-    #  This will be repated until Ctrl-C
-    #
-    output="$($ping_cmd  | grep loss)"
-    iterations=$(( iterations + 1 ))
-    this_time_packet_loss=$(echo "$output" | awk '{print $1-$4}')
-    this_time_percent_loss=$(echo "$output" | awk -v a="$packet_loss_param_no" '{print $a}' )
-    ack_loss=$((ack_loss + this_time_packet_loss))
-    avg_loss=$(
-        awk -v ack_loss=$ack_loss -v count=$iterations \
-            -v ping_count=$ping_count \
-            'BEGIN { print 100 * (ack_loss/(count * ping_count)) }' )
+#==========================================
 
-    printf "%6s avg:%3.0f%% %s " "$this_time_percent_loss" "$avg_loss" \
-           "$ping_count"
-    date +%H:%M:%S
+# Initialize packet loss counters and jitter for each interface
+declare -A ack_loss
+declare -A total_dropped_packets
+declare -A previous_output
+declare -A jitter
+declare -A avg_jitter
+declare -A prev_rtt
+
+for interface in $interfaces; do
+    ack_loss[$interface]=0
+    total_dropped_packets[$interface]=0
+    previous_output[$interface]=""
+    jitter[$interface]=0
+    avg_jitter[$interface]=0
+    prev_rtt[$interface]=""
 done
+
+# Infinite loop to alternate between hosts
+while true; do
+    # Loop through all provided hosts, one cycle per host
+    for current_host in $hosts; do
+        output=""
+        pids=()
+
+        for interface in $interfaces; do
+            # Set the ping command for the current interface and host
+            ping_cmd="ping -I $interface -c $ping_count $current_host"
+
+            # Run the ping command in the background and store the process ID
+            $ping_cmd > /tmp/ping_${interface}_${current_host//./_}.log &
+            pids+=($!)
+        done
+
+        # Wait for all pings to complete
+        for pid in "${pids[@]}"; do
+            wait $pid
+        done
+
+        # Process the output for each interface
+        for interface in $interfaces; do
+            log_file="/tmp/ping_${interface}_${current_host//./_}.log"
+            ping_output=$(grep loss "$log_file")
+            rtt_values=$(grep "time=" "$log_file" | awk -F'time=' '{print $2}' | awk '{print $1}')
+
+            # Skip processing if log is empty or invalid
+            if [ -z "$ping_output" ]; then
+                echo "Warning: No valid output for $interface on $current_host."
+                continue
+            fi
+
+            # Extract packet statistics
+            this_time_packet_loss=$(echo "$ping_output" | awk '{print $1-$4}')
+            this_time_percent_loss=$(echo "$ping_output" | awk -v a="$packet_loss_param_no" '{print $a}')
+            total_dropped_packets[$interface]=$((total_dropped_packets[$interface] + this_time_packet_loss))
+            ack_loss[$interface]=$((ack_loss[$interface] + this_time_packet_loss))
+
+            # Avoid division by zero for avg_loss calculation
+            if [ $ping_count -gt 0 ]; then
+                avg_loss=$(awk -v ack="${ack_loss[$interface]}" -v total=$((ping_count)) 'BEGIN { print 100 * (ack / total) }')
+            else
+                avg_loss=0
+            fi
+
+            # Calculate jitter for this run
+            total_jitter=0
+            jitter_count=0
+
+            for rtt in $rtt_values; do
+                if [ -n "${prev_rtt[$interface]}" ]; then
+                    jitter_value=$(awk -v curr="$rtt" -v prev="${prev_rtt[$interface]}" 'BEGIN { print (curr > prev ? curr - prev : prev - curr) }')
+                    total_jitter=$(awk -v t="$total_jitter" -v j="$jitter_value" 'BEGIN { print t + j }')
+                    jitter_count=$((jitter_count + 1))
+                fi
+                prev_rtt[$interface]="$rtt" # Update the last RTT for this interface
+            done
+
+            if [ $jitter_count -gt 0 ]; then
+                jitter[$interface]=$(awk -v total="$total_jitter" -v count="$jitter_count" 'BEGIN { print total / count }')
+            else
+                jitter[$interface]=0
+            fi
+
+            # Calculate cumulative average jitter
+            avg_jitter[$interface]=$(awk -v curr_avg="${avg_jitter[$interface]}" -v curr_jitter="${jitter[$interface]}" -v count=1 'BEGIN { print (curr_avg + curr_jitter) / 2 }')
+
+            # Prepare current output for this interface
+            current_output=$(printf "%-10s %-10s %4s avg:%3.0f%% dropped:%d jitter:%0.1fms avg_jitter:%0.1fms %s\n" \
+                             "$interface" "$current_host" "$this_time_percent_loss" "$avg_loss" "$this_time_packet_loss" \
+                             "${jitter[$interface]}" "${avg_jitter[$interface]}" "$(date +%H:%M:%S)")
+
+            # Only print if the output has changed for this interface
+            if [ "$current_output" != "${previous_output[$interface]}" ]; then
+                output+="${current_output}\n"
+                previous_output[$interface]=$current_output
+            fi
+        done
+
+        # Print consolidated output if there's any change
+        if [ -n "$output" ]; then
+            echo -e "$output"
+            echo   # Add an extra blank line between updates for readability
+        fi
+    done
+done
+
+
