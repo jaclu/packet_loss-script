@@ -47,10 +47,9 @@ __version="1.6.0 2021-12-18"
 ping_count=60
 
 #
-# what to ping (can be overriden by param2)
+# what to ping (can be overridden by param2)
 #
 host=8.8.4.4
-
 
 #==========================================
 #
@@ -58,37 +57,32 @@ host=8.8.4.4
 #
 #==========================================
 
-
 echo "$(basename "$0") version: $__version"
-
 
 #
 #  Override ping_count with param 1
 #
-if [ $# -gt 2 ] ; then
+if [ $# -gt 2 ]; then
     echo "ERROR: Only params supported - pingcount and host."
     exit 1
 fi
 
-
-
-
-if [ -n  "$1" ] ; then
+if [ -n "$1" ]; then
     ping_count="$1"
     case "$ping_count" in
 
-        (*[!0123456789]*)
+        [0123456789]) ;;
+        *)
             echo "ERROR param 1 not a valid integer value!"
             exit 1
             ;;
 
     esac
     if [ "$ping_count" -lt 1 ]; then
-        echo "WARNING: $ping_count is not a meaningfull value, changed to 1  ***"
+        echo "WARNING: $ping_count is not a meaningful value, changed to 1  ***"
         ping_count=1
     fi
 fi
-
 
 #
 #   Override default host with param 2
@@ -96,8 +90,6 @@ fi
 if [ -n "$2" ]; then
     host="$2"
 fi
-
-
 
 #
 #
@@ -110,8 +102,8 @@ fi
 # Argh, even the position for % packet loss is not constant...
 packet_loss_param_no="7"
 
-# triggering an eror printing valid params...
-timeout_help="$(ping -h 2> /dev/stdout| grep timeout)"
+# triggering an error printing valid params...
+timeout_help="$(ping -h 2>/dev/stdout | grep timeout)"
 
 if [ "${timeout_help#*-t}" != "$timeout_help" ]; then
     timeout_flag="t"
@@ -136,16 +128,14 @@ fi
 # to avoid redundant typing common params are given once here
 ping_cmd="$ping_cmd -c $ping_count $host"
 
-
 #
 #  Check if host is initially responding.
 #
-if ! $ping_tst_cmd -c 1 "$host" > /dev/null; then
+if ! $ping_tst_cmd -c 1 "$host" >/dev/null; then
     echo
     echo "WARNING: host: $host is not responding!"
     echo
 fi
-
 
 #
 #  Explaining task at hand
@@ -160,7 +150,6 @@ else
 fi
 echo
 
-
 #
 #  Kill this script on Ctrl-C, dont let ping swallow it
 #
@@ -173,7 +162,6 @@ trap '
     kill -s INT "$$"
 ' INT
 
-
 #
 #  Main loop
 #
@@ -183,17 +171,18 @@ while true; do
     #  This will run $ping_count pings to $host and then report packet loss.
     #  This will be repated until Ctrl-C
     #
-    output="$($ping_cmd  | grep loss)"
-    iterations=$(( iterations + 1 ))
+    output="$($ping_cmd | grep loss)"
+    iterations=$((iterations + 1))
     this_time_packet_loss=$(echo "$output" | awk '{print $1-$4}')
-    this_time_percent_loss=$(echo "$output" | awk -v a="$packet_loss_param_no" '{print $a}' )
+    this_time_percent_loss=$(echo "$output" | awk -v a="$packet_loss_param_no" '{print $a}')
     ack_loss=$((ack_loss + this_time_packet_loss))
     avg_loss=$(
-        awk -v ack_loss=$ack_loss -v count=$iterations \
-            -v ping_count=$ping_count \
-            'BEGIN { print 100 * (ack_loss/(count * ping_count)) }' )
+        awk -v ack_loss="$ack_loss" -v count="$iterations" \
+            -v ping_count="$ping_count" \
+            'BEGIN { print 100 * (ack_loss/(count * ping_count)) }'
+    )
 
     printf "%6s avg:%3.0f%% %s " "$this_time_percent_loss" "$avg_loss" \
-           "$ping_count"
+        "$ping_count"
     date +%H:%M:%S
 done
